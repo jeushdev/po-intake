@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Webhook Referral Tester</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #172033;
+      background: #f4f6f9;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      min-height: 100vh;
+      margin: 0;
+      display: grid;
+      place-items: center;
+      padding: 32px 16px;
+    }
+
+    main {
+      width: min(100%, 560px);
+      padding: 32px;
+      background: #ffffff;
+      border: 1px solid #dde2ea;
+      border-radius: 14px;
+      box-shadow: 0 16px 40px rgba(23, 32, 51, 0.08);
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: clamp(1.5rem, 4vw, 2rem);
+      line-height: 1.2;
+    }
+
+    .intro {
+      margin: 0 0 28px;
+      color: #5d6677;
+      line-height: 1.5;
+    }
+
+    .field {
+      margin-bottom: 18px;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 7px;
+      font-size: 0.925rem;
+      font-weight: 650;
+    }
+
+    input,
+    select,
+    textarea {
+      width: 100%;
+      padding: 11px 12px;
+      border: 1px solid #c8cfdb;
+      border-radius: 8px;
+      background: #ffffff;
+      color: inherit;
+      font: inherit;
+      transition: border-color 120ms ease, box-shadow 120ms ease;
+    }
+
+    input:focus,
+    select:focus,
+    textarea:focus {
+      outline: none;
+      border-color: #3157c8;
+      box-shadow: 0 0 0 3px rgba(49, 87, 200, 0.15);
+    }
+
+    textarea {
+      min-height: 120px;
+      resize: vertical;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      margin-top: 24px;
+    }
+
+    button {
+      border: 0;
+      border-radius: 8px;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background-color 120ms ease, opacity 120ms ease;
+    }
+
+    #submitButton {
+      padding: 11px 18px;
+      background: #3157c8;
+      color: #ffffff;
+    }
+
+    #submitButton:hover:not(:disabled) {
+      background: #2749aa;
+    }
+
+    #duplicateButton {
+      padding: 8px 12px;
+      background: #edf0f5;
+      color: #344054;
+      font-size: 0.875rem;
+    }
+
+    #duplicateButton:hover:not(:disabled) {
+      background: #e0e5ed;
+    }
+
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.55;
+    }
+
+    #status {
+      display: none;
+      margin: 20px 0 0;
+      padding: 11px 13px;
+      border-radius: 8px;
+      font-size: 0.925rem;
+      line-height: 1.4;
+    }
+
+    #status.visible {
+      display: block;
+    }
+
+    #status.pending {
+      color: #684f00;
+      background: #fff7d6;
+      border: 1px solid #eed987;
+    }
+
+    #status.success {
+      color: #17653a;
+      background: #eaf8f0;
+      border: 1px solid #a9dec0;
+    }
+
+    #status.error {
+      color: #9b2533;
+      background: #fff0f1;
+      border: 1px solid #efb4bb;
+    }
+
+    @media (max-width: 480px) {
+      main {
+        padding: 24px 20px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Referral Webhook Tester</h1>
+    <p class="intro">Send a sample referral payload to your configured webhook endpoint.</p>
+
+    <form id="referralForm">
+      <div class="field">
+        <label for="fullName">Full Name</label>
+        <input id="fullName" name="full_name" type="text" autocomplete="name" required>
+      </div>
+
+      <div class="field">
+        <label for="email">Email</label>
+        <input id="email" name="email" type="email" autocomplete="email" required>
+      </div>
+
+      <div class="field">
+        <label for="requestType">Request Type</label>
+        <select id="requestType" name="request_type" required>
+          <option value="" selected disabled>Select a request type</option>
+          <option value="Housing Referral">Housing Referral</option>
+          <option value="Counseling Referral">Counseling Referral</option>
+          <option value="General Inquiry">General Inquiry</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="message">Message / Details</label>
+        <textarea id="message" name="message"></textarea>
+      </div>
+
+      <div class="actions">
+        <button id="submitButton" type="submit">Submit</button>
+        <button id="duplicateButton" type="button" disabled>Submit Duplicate</button>
+      </div>
+
+      <p id="status" role="status" aria-live="polite"></p>
+    </form>
+  </main>
+
+  <script>
+    const WEBHOOK_URL = "http://localhost:5678/webhook-test/referral-intake"; // Replace with your webhook URL.
+
+    const form = document.getElementById("referralForm");
+    const submitButton = document.getElementById("submitButton");
+    const duplicateButton = document.getElementById("duplicateButton");
+    const statusMessage = document.getElementById("status");
+
+    let lastSubmittedPayload = null;
+    let requestInFlight = false;
+
+    function showStatus(message, type) {
+      statusMessage.textContent = message;
+      statusMessage.className = `visible ${type}`;
+    }
+
+    function setRequestState(isInFlight, source) {
+      requestInFlight = isInFlight;
+      submitButton.disabled = isInFlight;
+      duplicateButton.disabled = isInFlight || lastSubmittedPayload === null;
+
+      submitButton.textContent = isInFlight && source === "form" ? "Submitting…" : "Submit";
+      duplicateButton.textContent = isInFlight && source === "duplicate"
+        ? "Submitting Duplicate…"
+        : "Submit Duplicate";
+    }
+
+    async function sendPayload(payload, source) {
+      if (requestInFlight) return;
+
+      setRequestState(true, source);
+      showStatus(source === "duplicate" ? "Submitting duplicate…" : "Submitting…", "pending");
+
+      try {
+        const response = await fetch(WEBHOOK_URL, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+          throw new Error(`Webhook returned HTTP ${response.status} ${response.statusText}`.trim());
+        }
+
+        showStatus(
+          source === "duplicate" ? "Duplicate submission received" : "Submission received",
+          "success"
+        );
+      } catch (error) {
+        console.error("Webhook submission failed:", error);
+        showStatus("Submission failed. Check the console and webhook URL, then try again.", "error");
+      } finally {
+        setRequestState(false, source);
+      }
+    }
+
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+
+      const payload = {
+        full_name: document.getElementById("fullName").value,
+        email: document.getElementById("email").value,
+        request_type: document.getElementById("requestType").value,
+        message: document.getElementById("message").value
+      };
+
+      lastSubmittedPayload = Object.freeze({ ...payload });
+      sendPayload(lastSubmittedPayload, "form");
+    });
+
+    duplicateButton.addEventListener("click", () => {
+      if (lastSubmittedPayload !== null) {
+        sendPayload(lastSubmittedPayload, "duplicate");
+      }
+    });
+  </script>
+</body>
+</html>
