@@ -1,0 +1,390 @@
+{
+  "name": "Main Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "referral-intake",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        -640
+      ],
+      "id": "17494426-7856-4bff-b944-8beb1fac3dea",
+      "name": "Receive Submission",
+      "webhookId": "2b48388e-44a5-4cd7-bf66-e794c7a60a8b"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO submissions (\n    raw_payload,\n    source_ip,\n    email,\n    full_name,\n    request_type,\n    dedup_hash,\n    dedup_bucket\n)\nVALUES (\n    $1::jsonb,\n    $2,\n    $3,\n    $4,\n    $5,\n    encode(digest($3 || '|' || $5 || '|' || $4, 'sha256'), 'hex'),\n    encode(digest($3 || '|' || $5 || '|' || $4, 'sha256'), 'hex') || '-' || floor(extract(epoch from now()) / 604800)\n)\nRETURNING id, status;",
+        "options": {
+          "queryReplacement": "={{ JSON.stringify($json.body) }}\n{{ $json.headers[\"x-forwarded-for\"] || \"unknown\" }}\n{{$json.body.email.toLowerCase().trim() }}\n{{ $json.body.full_name.toLowerCase().trim() }}\n{{ $json.body.request_type.toLowerCase().trim() }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        224,
+        -640
+      ],
+      "id": "3800920e-3da4-44b3-859c-7e703028690e",
+      "name": "Insert Submission (dedup check)",
+      "credentials": {
+        "postgres": {
+          "id": "78Xz36yO858extss",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "{\n  \"result\": \"success\",\n  \"message\": \"Submission received\"\n}\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        448,
+        -736
+      ],
+      "id": "1736f59b-866d-4481-b51d-1d919f3cfbc0",
+      "name": "Set Success Response"
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "{\n  \"result\": \"duplicate\",\n  \"message\": \"Already submitted recently\"\n}\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        1568,
+        -352
+      ],
+      "id": "27b89ca6-c7de-449f-a49e-11251b5ff6aa",
+      "name": "Set Duplicate Response"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE submissions\nSET status = 'processing'\nWHERE id = $1;",
+        "options": {
+          "queryReplacement": "={{ $('Insert Submission (dedup check)').item.json.id }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        672,
+        -736
+      ],
+      "id": "cd271d87-c61f-49e4-8fda-7126aeab39d7",
+      "name": "Update Status: Processing",
+      "credentials": {
+        "postgres": {
+          "id": "78Xz36yO858extss",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO cases (submission_id, email, full_name, request_type, assigned_to)\nVALUES ($1, $2, $3, $4, $5)\nRETURNING id, ",
+        "options": {
+          "queryReplacement": "={{ $('Insert Submission (dedup check)').item.json.id }}{{ $('Receive Submission').item.json.body.full_name }}{{ $('Receive Submission').item.json.body.request_type }}{{ $('Receive Submission').item.json.body.request_type }}{{ $json.request_type === 'Housing Referral' ? 'housing_team@example.com' : 'general_team@example.com' }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        896,
+        -736
+      ],
+      "id": "2b46a0df-6ce0-418b-9b6a-01aae8c9be97",
+      "name": "Create Case Record",
+      "credentials": {
+        "postgres": {
+          "id": "78Xz36yO858extss",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "{\n  \"result\": \"processing_delayed\",\n  \"message\": \"Your submission was received and is being processed.\"\n}\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        1568,
+        -544
+      ],
+      "id": "417c6207-88af-4efa-9098-29f4bccdfa8d",
+      "name": "Set Processing-Delayed Response"
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "{\n  \"status\": \"case_created\",\n  \"description\": \"Case has been created\"\n}\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        1120,
+        -832
+      ],
+      "id": "54edfdee-885b-436e-86fe-71d4c2160239",
+      "name": "Update Status: Case Created"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"from\": \"onboarding@resend.dev\",\n  \"to\": \"youremail@gmail.com\",\n  \"subject\": \"New case: {{ $('Receive Submission').item.json.body.request_type }}\",\n  \"text\": \"A new case was submitted by {{ $('Receive Submission').item.json.body.full_name }} ({{ $('Receive Submission').item.json.body.email }}). Assigned to: {{ $('Create Case Record').item.json.assigned_to }}.\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1344,
+        -832
+      ],
+      "id": "46e3344b-103b-4d28-9e5f-764e6fa68c1b",
+      "name": "Send Notification Email",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "pWmPTaAkDnEAv6BM",
+          "name": "Header Auth account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "{\n  \"result\": \"success\",\n  \"message\": \"Submission received\"\n}\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        1568,
+        -928
+      ],
+      "id": "cc42de30-23c6-4bc9-af28-3b6e920668e9",
+      "name": "Set Completed Response"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"result\": \"{{ $json.result }}\",\n  \"message\": \"{{ $json.message }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1792,
+        -640
+      ],
+      "id": "ce5793a9-07ab-4307-8405-d01e4f14c32a",
+      "name": "Send Response to Form"
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "{\n  \"result\": \"notification_delayed\",\n  \"message\": \"Your submission was received and processed. A confirmation email will follow shortly.\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        1568,
+        -736
+      ],
+      "id": "88db0bb5-a950-4005-bcf9-b2b55641e49e",
+      "name": "Set Notification Delayed Response"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Receive Submission": {
+      "main": [
+        [
+          {
+            "node": "Insert Submission (dedup check)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Submission (dedup check)": {
+      "main": [
+        [
+          {
+            "node": "Set Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set Duplicate Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Success Response": {
+      "main": [
+        [
+          {
+            "node": "Update Status: Processing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Duplicate Response": {
+      "main": [
+        [
+          {
+            "node": "Send Response to Form",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Status: Processing": {
+      "main": [
+        [
+          {
+            "node": "Create Case Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Case Record": {
+      "main": [
+        [
+          {
+            "node": "Update Status: Case Created",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set Processing-Delayed Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Processing-Delayed Response": {
+      "main": [
+        [
+          {
+            "node": "Send Response to Form",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Status: Case Created": {
+      "main": [
+        [
+          {
+            "node": "Send Notification Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Notification Email": {
+      "main": [
+        [
+          {
+            "node": "Set Completed Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set Notification Delayed Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Completed Response": {
+      "main": [
+        [
+          {
+            "node": "Send Response to Form",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Response to Form": {
+      "main": [
+        []
+      ]
+    },
+    "Set Notification Delayed Response": {
+      "main": [
+        [
+          {
+            "node": "Send Response to Form",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "d2fbf762-84c5-4444-8d32-33871afc800f",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "e7ab63583f3cb13d0c73694880423a7d501d8045947d411dea15445a9e7aba8d"
+  },
+  "nodeGroups": [],
+  "id": "J6TCIqHmcaizBcxy",
+  "tags": []
+}

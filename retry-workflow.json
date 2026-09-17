@@ -1,0 +1,295 @@
+{
+  "name": "Retry Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        -464
+      ],
+      "id": "922c54ae-7716-4df3-9614-4758abbbd965",
+      "name": "Run Every N Minutes"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, email, full_name, request_type\nFROM submissions\nWHERE status = 'processing'\n  AND received_at < now() - interval '0 seconds'",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        224,
+        -560
+      ],
+      "id": "9664c4e3-8710-4aec-a601-189ccb89735c",
+      "name": "Find Stuck: No Case Yet",
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "78Xz36yO858extss",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT s.id, s.email, s.full_name, c.assigned_to\nFROM submissions s\nJOIN cases c ON c.submission_id = s.id\nWHERE s.status = 'case_created'\n  AND s.received_at < now() - interval '2 minutes';",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        672,
+        -368
+      ],
+      "id": "4f311438-8d4d-4256-8790-73fb8d62e5e4",
+      "name": "Find Stuck: Notification Only",
+      "credentials": {
+        "postgres": {
+          "id": "78Xz36yO858extss",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO cases (submission_id, email, full_name, request_type, assigned_to)\nVALUES ($1, $2, $3, $4, $5)\nRETURNING id, assigned_to;",
+        "options": {
+          "queryReplacement": "={{ $('Find Stuck: No Case Yet').item.json.id }}\n{{ $('Find Stuck: No Case Yet').item.json.email }}\n{{ $('Find Stuck: No Case Yet').item.json.full_name }}\n{{ $('Find Stuck: No Case Yet').item.json.request_type }}\n{{ $('Find Stuck: No Case Yet').item.json.request_type === 'Housing Referral' ? 'housing_team@example.com' : 'general_team@example.com' }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        448,
+        -560
+      ],
+      "id": "1e10ff3e-e54b-46b8-8429-59709e775169",
+      "name": "Create Case Record (Retry)",
+      "credentials": {
+        "postgres": {
+          "id": "78Xz36yO858extss",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "{\n  \"status\": \"case_created\",\n  \"description\": \"Case has been created\"\n}\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        672,
+        -560
+      ],
+      "id": "ca02f693-b690-4378-8545-4258ef882032",
+      "name": "Update Status: Case Created (Retry)"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"from\": \"onboarding@resend.dev\",\n  \"to\": \"youremail@gmail.com\",\n  \"subject\": \"New case: {{ $('Find Stuck: No Case Yet').item.json.request_type }}\",\n  \"text\": \"A new case was submitted by {{ $('Find Stuck: No Case Yet').item.json.full_name }} ({{ $('Find Stuck: No Case Yet').item.json.email }}). Assigned to: {{ $('Create Case Record (Retry)').item.json.assigned_to }}.\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        896,
+        -560
+      ],
+      "id": "784194f2-0406-4bc8-9982-75751f786bd7",
+      "name": "Send Notification (Retry - Branch A)",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "pWmPTaAkDnEAv6BM",
+          "name": "Header Auth account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"from\": \"onboarding@resend.dev\",\n  \"to\": \"youremail@gmail.com\",\n  \"subject\": \"New case: referral follow-up\",\n  \"text\": \"A case was submitted by {{ $('Find Stuck: Notification Only').item.json.full_name }} ({{ $('Find Stuck: Notification Only').item.json.email }}). Assigned to: {{ $('Find Stuck: Notification Only').item.json.assigned_to }}.\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        896,
+        -368
+      ],
+      "id": "593a8935-0895-4811-b49f-877dba8cfa4a",
+      "name": "Send Notification (Retry - Branch B)",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "pWmPTaAkDnEAv6BM",
+          "name": "Header Auth account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE submissions SET status = 'completed' WHERE id = $1;",
+        "options": {
+          "queryReplacement": "={{ $('Find Stuck: No Case Yet').item.json.id }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        1120,
+        -464
+      ],
+      "id": "14ea2aac-d5f5-49af-b01c-559bc1128df4",
+      "name": "Update Status: Completed",
+      "credentials": {
+        "postgres": {
+          "id": "78Xz36yO858extss",
+          "name": "Postgres account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Run Every N Minutes": {
+      "main": [
+        [
+          {
+            "node": "Find Stuck: No Case Yet",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Find Stuck: Notification Only",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Stuck: No Case Yet": {
+      "main": [
+        [
+          {
+            "node": "Create Case Record (Retry)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Stuck: Notification Only": {
+      "main": [
+        [
+          {
+            "node": "Send Notification (Retry - Branch B)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Case Record (Retry)": {
+      "main": [
+        [
+          {
+            "node": "Update Status: Case Created (Retry)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Status: Case Created (Retry)": {
+      "main": [
+        [
+          {
+            "node": "Send Notification (Retry - Branch A)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Notification (Retry - Branch A)": {
+      "main": [
+        [
+          {
+            "node": "Update Status: Completed",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update Status: Completed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Notification (Retry - Branch B)": {
+      "main": [
+        [
+          {
+            "node": "Update Status: Completed",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update Status: Completed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "65a6620c-21ce-46ab-ac78-8ff5528f3b73",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "e7ab63583f3cb13d0c73694880423a7d501d8045947d411dea15445a9e7aba8d"
+  },
+  "nodeGroups": [],
+  "id": "wGZdgktFqkEyGKDy",
+  "tags": []
+}
