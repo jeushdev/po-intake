@@ -4,7 +4,7 @@ An n8n-based automation that takes website form submissions and safely turns the
 
 This was built as a self-directed portfolio project to demonstrate the specific engineering concerns that come up in real business automation work: idempotency, partial-failure recovery, and data integrity under unreliable external dependencies. No fake clients, users, or business results are represented here — this is a self-built, tested system using synthetic data.
 
-**[Demo video](#)** *(add your video link/embed here)*
+**[Demo video](https://github.com/user-attachments/assets/75b9dc0c-1c5b-498c-aba7-cb29ec407568)** 
 
 ---
 
